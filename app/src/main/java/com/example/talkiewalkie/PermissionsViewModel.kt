@@ -22,7 +22,7 @@ class PermissionsViewModel: ViewModel() {
     private val _permissionStates = mutableStateMapOf<String, Boolean>()
     val permissionStates: Map<String, Boolean> get() = _permissionStates
 
-    fun setPermissionState(permission: String, isGranted: Boolean) {
+    private fun setPermissionState(permission: String, isGranted: Boolean) {
         _permissionStates[permission] = isGranted
     }
 

@@ -17,6 +17,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,11 +44,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,11 +56,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.talkiewalkie.ui.theme.TalkieWalkieTheme
 import java.lang.reflect.Method
 
 class MainActivity : ComponentActivity() {
+
+    private val mainViewModel: MainViewModel by viewModels()
+    private val permissionsViewModel: PermissionsViewModel by viewModels()
+
     private val permissionsToRequest = mutableListOf<String>().apply {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -75,10 +77,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             TalkieWalkieTheme {
-                val headphones = remember { mutableStateListOf<BluetoothDevice>() }
-                val viewModel = viewModel<PermissionsViewModel>()
-                val dialogQueue = viewModel.visiblePermissionDialogQueue
-
+                val dialogQueue = permissionsViewModel.visiblePermissionDialogQueue
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -103,8 +102,8 @@ class MainActivity : ComponentActivity() {
 //                                }
 //                            }
                         )
-                        DeviceControls(viewModel, headphones)
-                        DeviceControls(viewModel, headphones)
+                        DeviceControls(permissionsViewModel, mainViewModel, 0)
+                        DeviceControls(permissionsViewModel, mainViewModel, 1)
                         Button(
                             onClick = { /* TODO */ }
                         ) {
@@ -129,9 +128,9 @@ class MainActivity : ComponentActivity() {
                             else -> return@forEach
                         },
                         isPermanentlyDeclined = !shouldShowRequestPermissionRationale(permission),
-                        onDismiss = viewModel::dismissPermissionDialog,
+                        onDismiss = permissionsViewModel::dismissPermissionDialog,
                         onOkClicked = {
-                            viewModel.dismissPermissionDialog()
+                            permissionsViewModel.dismissPermissionDialog()
                         },
                         onGoToAppSettingsClicked = ::openAppSettings
                     )
@@ -142,7 +141,7 @@ class MainActivity : ComponentActivity() {
                     contract = ActivityResultContracts.RequestMultiplePermissions(),
                     onResult = { perms ->
                         permissionsToRequest.forEach { permission ->
-                            viewModel.onPermissionResult(
+                            permissionsViewModel.onPermissionResult(
                                 permission = permission,
                                 isGranted = perms[permission] == true
                             )
@@ -153,13 +152,13 @@ class MainActivity : ComponentActivity() {
                     multiplePermissionsResultLauncher.launch(permissionsToRequest.toTypedArray())
                 }
 
-                checkForDevices(baseContext, headphones)
+                checkForDevices(baseContext, mainViewModel)
             }
         }
     }
 }
 
-private fun checkForDevices(context: Context, headphones: SnapshotStateList<BluetoothDevice>) {
+private fun checkForDevices(context: Context, mainViewModel: MainViewModel) {
     val btManager = context.getSystemService(ComponentActivity.BLUETOOTH_SERVICE) as BluetoothManager
     val pairedDevices: List<BluetoothDevice> = if (ActivityCompat.checkSelfPermission(
             context,
@@ -172,12 +171,13 @@ private fun checkForDevices(context: Context, headphones: SnapshotStateList<Blue
     pairedDevices.forEach { device ->
         val deviceName = device.name
         val macAddress = device.address
-        headphones.add(device)
+        mainViewModel.addHeadphone(device)
         Log.d(
             "pairedDevices",
             "paired device: $deviceName at $macAddress. isConnected: " + isConnected(device)
         )
     }
+
 }
 
 private fun isConnected(device: BluetoothDevice?): Boolean {
@@ -199,28 +199,24 @@ fun Activity.openAppSettings() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeviceSelectMenu(viewModel: PermissionsViewModel, headphones: SnapshotStateList<BluetoothDevice>) {
+fun DeviceSelectMenu(permissionsViewModel: PermissionsViewModel, mainViewModel: MainViewModel, index: Int) {
     val context = LocalContext.current
     if (ActivityCompat.checkSelfPermission(
         context,
         Manifest.permission.BLUETOOTH_CONNECT
     ) != PackageManager.PERMISSION_GRANTED) {
-        // TODO: Consider calling
-        //    ActivityCompat#requestPermissions
-        // here to request the missing permissions, and then overriding
-        //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-        //                                          int[] grantResults)
-        // to handle the case where the user grants the permission. See the documentation
-        // for ActivityCompat#requestPermissions for more details.
         return
     }
 
-
     var expanded by remember { mutableStateOf(false) }
-    val things = headphones.toList().map { it.name }.toMutableList()
+    val things = mainViewModel.headphones.map { it.name }.toMutableList()
     things.add("This Device")
-    var selectedThing by remember { mutableStateOf(things.firstOrNull()) }
-    if (viewModel.isPermissionGranted(Manifest.permission.BLUETOOTH_CONNECT)) {
+    var selectedThing = if (index == 0) {
+        mainViewModel.firstThing
+    } else {
+        mainViewModel.secondThing
+    }
+    if (permissionsViewModel.isPermissionGranted(Manifest.permission.BLUETOOTH_CONNECT)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -232,7 +228,7 @@ fun DeviceSelectMenu(viewModel: PermissionsViewModel, headphones: SnapshotStateL
                     .fillMaxWidth()
             ) {
                 TextField(
-                    value = selectedThing ?: "Test", // TODO: FIX THIS TEST CODE
+                    value = selectedThing,
                     onValueChange = {},
                     enabled = false,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
@@ -248,7 +244,7 @@ fun DeviceSelectMenu(viewModel: PermissionsViewModel, headphones: SnapshotStateL
                     onDismissRequest = { expanded = false },
                 ) {
                     things.forEach { item ->
-                        val btDevice = headphones.firstOrNull { it.name == item }
+                        val btDevice = mainViewModel.headphones.firstOrNull { it.name == item }
                         DropdownMenuItem(
                             modifier = Modifier.fillMaxWidth(),
                             text = {
@@ -263,7 +259,13 @@ fun DeviceSelectMenu(viewModel: PermissionsViewModel, headphones: SnapshotStateL
                             },
                             onClick = {
                                 if (isConnected(btDevice)) {
-                                    selectedThing = item
+//                                    Log.d("DeviceSelectMenu", "SelectedThing $index: Was ${mainViewModel.selectedThings}")
+                                    if (index == 0) {
+                                        mainViewModel.updateFirstHeadphone(item)
+                                    } else {
+                                        mainViewModel.updateSecondHeadphone(item)
+                                    }
+//                                    Log.d("DeviceSelectMenu", "SelectedThing $index: Now ${mainViewModel.selectedThings}")
                                     expanded = !expanded
                                     Toast.makeText(context, item, Toast.LENGTH_SHORT).show()
                                 } else {
@@ -323,11 +325,11 @@ fun CircularButton() {
 }
 
 @Composable
-fun DeviceControls(viewModel: PermissionsViewModel, devices: SnapshotStateList<BluetoothDevice>) {
+fun DeviceControls(permissionsViewModel: PermissionsViewModel, mainViewModel: MainViewModel, index: Int) {
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        DeviceSelectMenu(viewModel, devices)
+        DeviceSelectMenu(permissionsViewModel, mainViewModel, index)
         VolumeSlider()
     }
 }
